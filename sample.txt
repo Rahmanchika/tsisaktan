@@ -1,0 +1,9 @@
+
+This is an example text that contains a few abc and abbc to match different regex patterns. 
+Also, there are words like an underscore_word and another_one to find with regex.
+Here is a MixedCase word followed by an Uppercase sequence. 
+The adventures of Abbbb and A followed by a non-b letter should not match ab pattern. 
+Replace spaces, commas, and dots should change like this: space comma dot.
+Convert snake_case to camelCase and vice versa.
+SplitAtUpperCase. Insert spaces before Uppercase letters in a sentence.
+Convert camelCaseString to snake_case string.
