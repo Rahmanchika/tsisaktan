@@ -165,7 +165,7 @@ while not done:
             draw_rounded_line(screen, start_point, end_point, start_color, start_radius)
 
     # Draw rectangles
-    for rect in squares:
+    for rect in rects:
         start, end, color = rect
         pygame.draw.rect(screen, color, pygame.Rect(start, (end[0] - start[0], end[1] - start[1])))
 
