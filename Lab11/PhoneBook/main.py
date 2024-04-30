@@ -1,41 +1,103 @@
 #imports
 import csv, psycopg2
-from config import host, user, password, database
 
-#connecting to pgadmin
-def connectDatabase():
-    
-    #error handling
+#database connection
+def connect_database():
     try:
-        conn = psycopg2.connect(host = host, 
-                                database = database, 
-                                user = user, 
-                                password = password)
+        conn = psycopg2.connect(host="localhost", database="PhoneBook", user="postgres", password="59500")
+        print("Database connected successfully")
         return conn
-    
     except Exception as e:
-        print("Error connectin to the database:", e)
+        print(f"Error connecting to the database: {e}")
         return None
 
-#creating table if it doesnt exist
 def createTable(conn):
-
     try:
-        #cursor executes sql commands
         cur = conn.cursor()
         cur.execute('''
             CREATE TABLE IF NOT EXISTS phone_book (
-                    id SERIAL PRIMARY KEY,
-                    name VARCHAR(255) NOT NULL,
-                    number VARCHAR(255) NOT NULL
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                number VARCHAR(255) NOT NULL
             );
         ''')
         conn.commit()
         print("Table created successfully")
-    
     except Exception as e:
         print("Error while creating the table:", e)
         conn.rollback()
+
+def setupDatabaseFunctions(conn):
+    cur = conn.cursor()
+    try:
+        # Function to search records by pattern
+        cur.execute('''
+        CREATE OR REPLACE FUNCTION search_records(pattern VARCHAR)
+        RETURNS TABLE(id INT, name VARCHAR, number VARCHAR) AS $$
+        BEGIN
+            RETURN QUERY SELECT id, name, number FROM phone_book
+            WHERE name LIKE '%' || pattern || '%' OR number LIKE '%' || pattern || '%';
+        END;
+        $$ LANGUAGE plpgsql;
+        ''')
+
+        # Procedure to insert or update a user
+        cur.execute('''
+        CREATE OR REPLACE PROCEDURE insert_or_update_user(user_name VARCHAR, phone_number VARCHAR)
+        AS $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM phone_book WHERE name = user_name) THEN
+                UPDATE phone_book SET number = phone_number WHERE name = user_name;
+            ELSE
+                INSERT INTO phone_book(name, number) VALUES (user_name, phone_number);
+            END IF;
+        END;
+        $$ LANGUAGE plpgsql;
+        ''')
+
+        # Procedure for bulk inserting users
+        cur.execute('''
+        CREATE OR REPLACE PROCEDURE bulk_insert_users(users RECORD[])
+        AS $$
+        DECLARE
+            user RECORD;
+        BEGIN
+            FOR user IN SELECT * FROM unnest(users)
+            LOOP
+                CALL insert_or_update_user(user.name, user.number);
+            END LOOP;
+        END;
+        $$ LANGUAGE plpgsql;
+        ''')
+
+        # Function for pagination
+        cur.execute('''
+        CREATE OR REPLACE FUNCTION paginate_phonebook(limit INT, offset INT)
+        RETURNS TABLE(id INT, name VARCHAR, number VARCHAR) AS $$
+        BEGIN
+            RETURN QUERY SELECT id, name, number FROM phone_book
+            ORDER BY id LIMIT limit OFFSET offset;
+        END;
+        $$ LANGUAGE plpgsql;
+        ''')
+
+        # Procedure to delete data by name or phone
+        cur.execute('''
+        CREATE OR REPLACE PROCEDURE delete_record_by_name_or_phone(username VARCHAR, phone_number VARCHAR)
+        AS $$
+        BEGIN
+            DELETE FROM phone_book WHERE name = username OR number = phone_number;
+        END;
+        $$ LANGUAGE plpgsql;
+        ''')
+
+        conn.commit()
+        print("All procedures and functions created successfully")
+    except Exception as e:
+        print("Error while creating procedures and functions:", e)
+        conn.rollback()
+    finally:
+        cur.close()
 
 #inputing data from console
 def inputData(conn, name, number):
@@ -152,12 +214,11 @@ def deleteData(conn, username):
         print("An error occurred while deleting data:", e)
 
 def main():
-    conn = connectDatabase()
-    if conn is not None:
+    conn = connect_database()
+    if conn:
         createTable(conn)
+        setupDatabaseFunctions(conn)  # Setting up database functions and procedures
         while True:
-
-            #imitation for interface            
             print("Choose an option:")
             print("1. Enter new contact")
             print("2. Upload the data from csv")
@@ -179,8 +240,6 @@ def main():
                 chosenId = int(input("Enter an ID of the user: "))
                 newName = input("Enter a new name, or press enter to save current value: ")
                 newNumber = input("Enter a new number, or press enter to save current value: ")
-                
-                #adding possibility to remain current value
                 newName = None if newName == "" else newName
                 newNumber = None if newNumber == "" else newNumber
                 updateData(conn, chosenId, newName, newNumber)
@@ -193,6 +252,10 @@ def main():
                 deleteData(conn, rowToDelete)
 
             elif choice == '6':
+                pattern = input("Enter search pattern (name, surname, or phone number part): ")
+                searchByPattern(conn, pattern)  # You'll need to implement this function to call the search_records function
+
+            elif choice == '7':
                 print("Exiting program.")
                 break
 
@@ -200,8 +263,75 @@ def main():
                 print("Invalid choice. Please choose from 1-6.")
         conn.close()
     else:
-        print("Failed to connect to the database")      
+        print("Failed to connect to the database")
 
-#code will lauch after exit
 if __name__ == "__main__":
     main()
+
+
+def searchByPattern(conn, pattern):
+    cur = conn.cursor()
+    try:
+        cur.callproc('search_records', [pattern])
+        records = cur.fetchall()
+        print("Search Results:")
+        for rec in records:
+            print(f"ID: {rec[0]}, Name: {rec[1]}, Number: {rec[2]}")
+    except Exception as e:
+        print("Error during search:", e)
+    finally:
+        cur.close()
+
+
+def insertOrUpdateUser(conn, user_name, phone_number):
+    cur = conn.cursor()
+    try:
+        cur.callproc('insert_or_update_user', [user_name, phone_number])
+        conn.commit()
+        print(f"User {user_name} has been inserted or updated successfully.")
+    except Exception as e:
+        print(f"Error while inserting or updating user: {e}")
+        conn.rollback()
+    finally:
+        cur.close()
+
+def bulkInsertUsers(conn, user_list):
+    cur = conn.cursor()
+    try:
+        # Convert user_list into a list of PostgreSQL RECORD types
+        # Example user_list: [(name1, number1), (name2, number2), ...]
+        cur.execute("SELECT * FROM bulk_insert_users(%s)", (user_list,))
+        conn.commit()
+        print("Bulk insert operation completed successfully.")
+    except Exception as e:
+        print(f"Error during bulk insert: {e}")
+        conn.rollback()
+    finally:
+        cur.close()
+
+
+def paginatePhonebook(conn, limit, offset):
+    cur = conn.cursor()
+    try:
+        cur.callproc('paginate_phonebook', [limit, offset])
+        records = cur.fetchall()
+        print("Paginated Results:")
+        for record in records:
+            print(f"ID: {record[0]}, Name: {record[1]}, Number: {record[2]}")
+    except Exception as e:
+        print(f"Error during pagination: {e}")
+    finally:
+        cur.close()
+
+def deleteRecordByNameOrPhone(conn, username, phone_number):
+    cur = conn.cursor()
+    try:
+        cur.callproc('delete_record_by_name_or_phone', [username, phone_number])
+        conn.commit()
+        print(f"Record with name {username} or phone {phone_number} has been deleted.")
+    except Exception as e:
+        print(f"Error while deleting data: {e}")
+        conn.rollback()
+    finally:
+        cur.close()
+
